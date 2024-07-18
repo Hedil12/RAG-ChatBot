@@ -6,13 +6,6 @@ from accelerate import Accelerator
 from datetime import datetime
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-import nest_asyncio, logging, asyncio
-from telegram.helpers import escape_markdown
-from telegram import Update
-from telegram.constants import ParseMode
-from telegram.ext import Updater, CommandHandler, MessageHandler, filters, ApplicationBuilder, ContextTypes 
-from langchain.document_loaders import PyPDFLoader
-
 accelerator = Accelerator()
 
 # Define the RAG model and embeddings functions
@@ -51,14 +44,6 @@ def retrieve_context(query, top_k=3):
         context = " ".join([doc.page_content for doc in docs])
     return context
 
-# Load and process Documents sent to users in PDF Format
-def load_and_process_documents(file_path):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
-    loader = PyPDFLoader(file_path)
-    pages = loader.load_and_split(text_splitter=text_splitter)
-    for page in pages:
-        page.page_content = page.page_content.replace('\n',' ')
-    return pages
 
 # Taking in the responses and models
 def generate_response(model, tokenizer, text):
@@ -82,7 +67,6 @@ async def ask_question(user_query):
     - Ensure all responses are accurate and aligned with computer science topics.
     Ensure responses are derived from the dataset, use inference and suggestions to provide comprehensive answers.
     """
-    start_time = datetime.now()
     # Retrieve relevant context
     context = retrieve_context(user_query)
     model, tokenizer = RAG_model()
@@ -104,10 +88,8 @@ async def ask_question(user_query):
 
     # Extract the response after the user query
     cleaned_response = clean_response(generated_text)
-    end_time = datetime.now()
-    elapsed_time = (start_time - end_time).total_seconds
 
-    return cleaned_response, elapsed_time
+    return cleaned_response
 
 # Clean the responses
 def clean_response(generated_text):
@@ -120,64 +102,10 @@ def clean_response(generated_text):
     cleaned_response = "\n\n".join([line.strip() for line in cleaned_response.split("\n\n") if line.strip()])
     return cleaned_response
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for the /start command"""
-    user_id = update.effective_user.id
-    if user_id not in context.bot_data:
-        context.bot_data[user_id] = {}
-    await update.message.reply_text("Hi!\nI'm your AI assistant. Ask me any question about computer science and coding!")
-
-async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for receiving PDF documents"""
-    user_id = update.effective_user.id
-    
-     # Initialize user-specific data if it doesn't exist
-    if user_id not in context.bot_data:
-        context.bot_data[user_id] = {}
-        
-    document = update.message.document
-    if document.mime_type == 'application/pdf':
-        file_id = document.file_id
-        new_file = await context.bot.get_file(file_id)
-        file_path = f"{file_id}.pdf"
-        await new_file.download_to_drive(file_path)
-        
-        pages = load_and_process_documents(file_path)
-        if 'vectordb' not in context.bot_data[user_id]:
-            vectordb = Qdrant.from_documents(pages, embeddings)
-            context.bot_data[user_id]['vectordb'] = vectordb
-        else:
-            vectordb = context.bot_data[user_id]['vectordb']
-            vectordb.add_documents(pages)
-        
-        await update.message.reply_text('PDF document received and processed. You can now ask questions about the content.')
-    else:
-        await update.message.reply_text(f"Unsupported file type: {document.mime_type}. Skipping this file.")
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for answering questions based on the processed documents"""
-    user_id = update.effective_user.id
-    question = update.message.text
-    response, duration = await ask_question(question)
-    print(f"{user_id} => Query:{question}\nResponse:{response}\nDuration:{duration:.2f}")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=escape_markdown(response))
-
-async def main():
-    """Main function to run the bot"""
- 
-    application = ApplicationBuilder().token(API_TOKEN).build()
-
-    # Register command and message handlers
-    
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Document.ALL, document_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, question_handler))
-
-    # Start the bot
-    await application.run_polling()
-   # application.idle()
+def main(query):
+    return ask_question(query)
 
 if __name__ == '__main__':
-    main()
+    query = input('Enter query: ')
+    main(query)
     
